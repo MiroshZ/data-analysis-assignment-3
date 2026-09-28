@@ -11,17 +11,18 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from analysis_agent import analyze_file, validate_upload
+from groq_agent import DEFAULT_GROQ_MODEL, analyze_file_groq
 
 
 load_dotenv()
 st.set_page_config(page_title="Данные → выводы", page_icon="📊", layout="wide")
 
 
-def get_api_key() -> str:
+def get_api_key(name: str) -> str:
     try:
-        return st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+        return st.secrets.get(name, os.getenv(name, ""))
     except Exception:
-        return os.getenv("OPENAI_API_KEY", "")
+        return os.getenv(name, "")
 
 
 def preview(filename: str, content: bytes) -> pd.DataFrame:
@@ -40,6 +41,13 @@ st.title("Данные → выводы")
 st.caption("Загрузите таблицу, задайте вопрос и получите анализ, вычисленный ИИ-агентом в Python.")
 
 with st.container(border=True):
+    provider = st.radio(
+        "API для анализа",
+        ["Groq (бесплатный план)", "OpenAI"],
+        horizontal=True,
+    )
+    if provider.startswith("Groq"):
+        st.caption("Для Groq таблица после преобразования должна помещаться в 10 КБ текста.")
     uploaded = st.file_uploader("CSV или Excel (.xlsx), до 15 МБ", type=["csv", "xlsx"])
     question = st.text_area(
         "Что узнать из данных?",
@@ -63,28 +71,43 @@ if uploaded is not None:
         st.warning(f"Предпросмотр недоступен: {exc}. Агент всё равно попробует прочитать файл.")
 
 if run and uploaded is not None:
-    key = get_api_key()
+    is_groq = provider.startswith("Groq")
+    key_name = "GROQ_API_KEY" if is_groq else "OPENAI_API_KEY"
+    key = get_api_key(key_name)
     if not key:
-        st.error("Не задан OPENAI_API_KEY. Добавьте его в .env или секреты Streamlit.")
+        st.error(f"Не задан {key_name}. Добавьте его в .env или секреты Streamlit.")
         st.stop()
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1")
     with st.spinner("Агент читает данные, запускает Python и проверяет выводы…"):
         try:
-            result = analyze_file(
-                safe_name,
-                raw,
-                question,
-                model=model,
-                client=OpenAI(api_key=key, timeout=180.0, max_retries=2),
-            )
+            if is_groq:
+                result = analyze_file_groq(
+                    safe_name,
+                    raw,
+                    question,
+                    model=os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL),
+                    api_key=key,
+                )
+            else:
+                result = analyze_file(
+                    safe_name,
+                    raw,
+                    question,
+                    model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
+                    client=OpenAI(api_key=key, timeout=180.0, max_retries=2),
+                )
         except Exception as exc:
             st.error(f"Анализ не выполнен: {exc}")
         else:
             st.session_state["analysis_result"] = result
             st.session_state["analysis_file"] = safe_name
+            st.session_state["analysis_provider"] = provider
 
 result = st.session_state.get("analysis_result")
-if result and st.session_state.get("analysis_file") == (uploaded.name if uploaded else None):
+if (
+    result
+    and st.session_state.get("analysis_file") == (uploaded.name if uploaded else None)
+    and st.session_state.get("analysis_provider") == provider
+):
     st.divider()
     st.subheader("Результат анализа")
     st.markdown(result.markdown)
