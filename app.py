@@ -71,6 +71,9 @@ if uploaded is not None:
         st.warning(f"Предпросмотр недоступен: {exc}. Агент всё равно попробует прочитать файл.")
 
 if run and uploaded is not None:
+    st.session_state.pop("analysis_result", None)
+    st.session_state.pop("analysis_file", None)
+    st.session_state.pop("analysis_provider", None)
     is_groq = provider.startswith("Groq")
     key_name = "GROQ_API_KEY" if is_groq else "OPENAI_API_KEY"
     key = get_api_key(key_name)
